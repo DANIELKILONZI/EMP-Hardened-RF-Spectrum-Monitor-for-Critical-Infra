@@ -126,3 +126,54 @@ display:
   waterfall: true                   # Render ASCII waterfall in console
   status_interval_s: 10.0           # Print status summary every 10 s
   waterfall_output_dir: "output/waterfalls"   # Directory for PNG exports
+
+# ---------------------------------------------------------------------------
+# Web Dashboard
+# ---------------------------------------------------------------------------
+dashboard:
+  enabled: false                    # Set to true to enable the HTTP dashboard
+  host: "0.0.0.0"
+  port: 8080
+  max_waterfall_rows: 100
+  detection_history_limit: 500
+
+# ---------------------------------------------------------------------------
+# Frequency Sweep / Hop Mode
+# ---------------------------------------------------------------------------
+sweep:
+  enabled: false                    # Set to true to enable frequency hopping
+  loop: true                        # Cycle through bands continuously
+  bands:
+    - center_hz: 433000000
+      dwell_s: 0.5
+      label: "433 MHz ISM"
+    - center_hz: 915000000
+      dwell_s: 0.5
+      label: "915 MHz ISM"
+    - center_hz: 1575420000
+      dwell_s: 0.5
+      label: "GPS L1"
+    - center_hz: 2450000000
+      dwell_s: 1.0
+      label: "2.4 GHz Drone/WiFi"
+    - center_hz: 5800000000
+      dwell_s: 1.0
+      label: "5.8 GHz FPV"
+
+# ---------------------------------------------------------------------------
+# Persistent Storage (SQLite)
+# ---------------------------------------------------------------------------
+storage:
+  enabled: false                    # Set to true to persist detections to SQLite
+  db_path: "data/rf_monitor.db"
+  store_snapshots: false            # Also save spectrum snapshots (disk-intensive)
+  snapshot_interval_s: 5.0
+  purge_older_than_days: 90         # Auto-delete records older than this
+
+# ---------------------------------------------------------------------------
+# ML Signal Classifier
+# ---------------------------------------------------------------------------
+ml_classifier:
+  enabled: false                    # Set to true to use ML classifier
+  model_path: "data/rf_classifier.joblib"  # Pre-trained model (auto-trains if absent)
+  n_training_samples: 300           # Samples per class for initial training

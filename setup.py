@@ -27,9 +27,21 @@ setup(
         "rtlsdr": ["pyrtlsdr>=0.3.0"],
         "usrp": [],  # uhd is installed via system package manager
         "viz": ["matplotlib>=3.7.0"],
+        "dashboard": ["flask>=3.0.0"],
+        "ml": ["scikit-learn>=1.5.0", "joblib>=1.3.0"],
+        "geo": ["scipy>=1.11.0"],
         "dev": [
             "pytest>=7.4.0",
             "pytest-cov>=4.1.0",
+            "flask>=3.0.0",
+            "scikit-learn>=1.5.0",
+        ],
+        "all": [
+            "flask>=3.0.0",
+            "matplotlib>=3.7.0",
+            "scikit-learn>=1.5.0",
+            "joblib>=1.3.0",
+            "scipy>=1.11.0",
         ],
     },
     entry_points={

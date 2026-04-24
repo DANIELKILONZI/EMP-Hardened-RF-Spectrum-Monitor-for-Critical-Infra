@@ -1,0 +1,254 @@
+---
+# ============================================================
+# EMP-Hardened RF Spectrum Monitor – Ansible Deployment Playbook
+# ============================================================
+# Deploys up to 50 field monitoring units in a mesh configuration.
+#
+# Requirements:
+#   ansible >= 2.15
+#   Python 3.9+ on target hosts
+#   SSH key access to all hosts
+#
+# Inventory:
+#   See deploy/ansible/inventory.ini for host groups.
+#
+# Usage:
+#   Deploy coordinator + all field units:
+#     ansible-playbook -i deploy/ansible/inventory.ini deploy/ansible/deploy.yml
+#
+#   Deploy coordinator only:
+#     ansible-playbook -i deploy/ansible/inventory.ini deploy/ansible/deploy.yml \
+#       --limit coordinator
+#
+#   Roll config update only (no restart):
+#     ansible-playbook -i deploy/ansible/inventory.ini deploy/ansible/deploy.yml \
+#       --tags config
+# ============================================================
+
+- name: Deploy RF Spectrum Monitor coordinator
+  hosts: coordinator
+  become: true
+  vars:
+    install_dir: /opt/emp-rf-monitor
+    config_dir: "{{ install_dir }}/config"
+    data_dir: /var/lib/emp-rf-monitor
+    log_dir: /var/log/emp-rf-monitor
+    service_user: rfmonitor
+    python_bin: /usr/bin/python3
+    venv_dir: "{{ install_dir }}/venv"
+
+  tasks:
+    - name: Install system dependencies
+      ansible.builtin.apt:
+        name:
+          - python3
+          - python3-pip
+          - python3-venv
+          - libusb-1.0-0
+          - rtl-sdr
+        state: present
+        update_cache: true
+
+    - name: Create rfmonitor system user
+      ansible.builtin.user:
+        name: "{{ service_user }}"
+        system: true
+        shell: /bin/false
+        home: "{{ install_dir }}"
+        create_home: true
+
+    - name: Create required directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ service_user }}"
+        group: "{{ service_user }}"
+        mode: "0755"
+      loop:
+        - "{{ install_dir }}"
+        - "{{ data_dir }}"
+        - "{{ log_dir }}"
+        - "{{ config_dir }}"
+
+    - name: Copy application source
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../src/"
+        dest: "{{ install_dir }}/src/"
+        owner: "{{ service_user }}"
+        group: "{{ service_user }}"
+        mode: "0644"
+
+    - name: Copy setup.py and requirements
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "{{ install_dir }}/"
+        owner: "{{ service_user }}"
+        group: "{{ service_user }}"
+        mode: "0644"
+      loop:
+        - "{{ playbook_dir }}/../../setup.py"
+        - "{{ playbook_dir }}/../../requirements.txt"
+
+    - name: Copy coordinator config
+      ansible.builtin.template:
+        src: coordinator_config.yaml.j2
+        dest: "{{ config_dir }}/default.yaml"
+        owner: "{{ service_user }}"
+        group: "{{ service_user }}"
+        mode: "0640"
+      tags: config
+
+    - name: Create Python virtual environment
+      ansible.builtin.command:
+        cmd: "{{ python_bin }} -m venv {{ venv_dir }}"
+        creates: "{{ venv_dir }}/bin/activate"
+
+    - name: Install Python dependencies
+      ansible.builtin.pip:
+        requirements: "{{ install_dir }}/requirements.txt"
+        virtualenv: "{{ venv_dir }}"
+        extra_args: "--no-cache-dir"
+
+    - name: Install Flask (dashboard)
+      ansible.builtin.pip:
+        name: "flask>=3.0.0"
+        virtualenv: "{{ venv_dir }}"
+
+    - name: Install application in editable mode
+      ansible.builtin.pip:
+        name: "-e {{ install_dir }}"
+        virtualenv: "{{ venv_dir }}"
+
+    - name: Deploy systemd service unit
+      ansible.builtin.template:
+        src: rf-monitor.service.j2
+        dest: /etc/systemd/system/rf-monitor.service
+        mode: "0644"
+      notify: Reload and restart rf-monitor
+
+    - name: Enable and start rf-monitor service
+      ansible.builtin.systemd:
+        name: rf-monitor
+        enabled: true
+        state: started
+        daemon_reload: true
+
+  handlers:
+    - name: Reload and restart rf-monitor
+      ansible.builtin.systemd:
+        name: rf-monitor
+        state: restarted
+        daemon_reload: true
+
+# ------------------------------------------------------------------
+# Field units – mesh mode enabled, no dashboard
+# ------------------------------------------------------------------
+- name: Deploy RF Spectrum Monitor field units
+  hosts: field_units
+  become: true
+  vars:
+    install_dir: /opt/emp-rf-monitor
+    config_dir: "{{ install_dir }}/config"
+    data_dir: /var/lib/emp-rf-monitor
+    log_dir: /var/log/emp-rf-monitor
+    service_user: rfmonitor
+    python_bin: /usr/bin/python3
+    venv_dir: "{{ install_dir }}/venv"
+
+  tasks:
+    - name: Install system dependencies
+      ansible.builtin.apt:
+        name:
+          - python3
+          - python3-pip
+          - python3-venv
+          - libusb-1.0-0
+          - rtl-sdr
+        state: present
+        update_cache: true
+
+    - name: Create rfmonitor system user
+      ansible.builtin.user:
+        name: "{{ service_user }}"
+        system: true
+        shell: /bin/false
+        home: "{{ install_dir }}"
+        create_home: true
+
+    - name: Create required directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ service_user }}"
+        group: "{{ service_user }}"
+        mode: "0755"
+      loop:
+        - "{{ install_dir }}"
+        - "{{ data_dir }}"
+        - "{{ log_dir }}"
+        - "{{ config_dir }}"
+
+    - name: Copy application source
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../src/"
+        dest: "{{ install_dir }}/src/"
+        owner: "{{ service_user }}"
+        group: "{{ service_user }}"
+        mode: "0644"
+
+    - name: Copy setup files
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "{{ install_dir }}/"
+        owner: "{{ service_user }}"
+        group: "{{ service_user }}"
+        mode: "0644"
+      loop:
+        - "{{ playbook_dir }}/../../setup.py"
+        - "{{ playbook_dir }}/../../requirements.txt"
+
+    - name: Deploy field unit config
+      ansible.builtin.template:
+        src: field_unit_config.yaml.j2
+        dest: "{{ config_dir }}/default.yaml"
+        owner: "{{ service_user }}"
+        group: "{{ service_user }}"
+        mode: "0640"
+      tags: config
+
+    - name: Create Python virtual environment
+      ansible.builtin.command:
+        cmd: "{{ python_bin }} -m venv {{ venv_dir }}"
+        creates: "{{ venv_dir }}/bin/activate"
+
+    - name: Install Python dependencies
+      ansible.builtin.pip:
+        requirements: "{{ install_dir }}/requirements.txt"
+        virtualenv: "{{ venv_dir }}"
+        extra_args: "--no-cache-dir"
+
+    - name: Install application
+      ansible.builtin.pip:
+        name: "-e {{ install_dir }}"
+        virtualenv: "{{ venv_dir }}"
+
+    - name: Deploy systemd service unit
+      ansible.builtin.template:
+        src: rf-monitor.service.j2
+        dest: /etc/systemd/system/rf-monitor.service
+        mode: "0644"
+      notify: Reload and restart rf-monitor
+
+    - name: Enable and start rf-monitor service
+      ansible.builtin.systemd:
+        name: rf-monitor
+        enabled: true
+        state: started
+        daemon_reload: true
+
+  handlers:
+    - name: Reload and restart rf-monitor
+      ansible.builtin.systemd:
+        name: rf-monitor
+        state: restarted
+        daemon_reload: true

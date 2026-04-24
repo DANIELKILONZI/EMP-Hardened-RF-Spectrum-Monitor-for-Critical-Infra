@@ -36,6 +36,7 @@ from .gps.geo_tagger import GeoTagger
 from .mesh.mesh_coordinator import MeshCoordinator
 from .scanner.base_scanner import ScanResult
 from .scanner.rtlsdr_scanner import RTLSDRScanner
+from .scanner.sweep_manager import SweepManager
 from .scanner.usrp_scanner import USRPScanner
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,10 @@ class RFSpectrumMonitor:
         self._alert_mgr: Optional[AlertManager] = None
         self._geo_tagger: Optional[GeoTagger] = None
         self._mesh: Optional[MeshCoordinator] = None
+        self._dashboard: Optional[object] = None  # DashboardServer
+        self._storage: Optional[object] = None    # DetectionStore
+        self._ml_classifier: Optional[object] = None  # MLSignalClassifier
+        self._sweep_managers: List = []
         self._running = False
 
     # ------------------------------------------------------------------
@@ -91,8 +96,11 @@ class RFSpectrumMonitor:
         self._init_detector()
         self._init_waterfall()
         self._init_alerts()
+        self._init_storage()
+        self._init_ml_classifier()
         self._init_scanners()
         self._init_mesh()
+        self._init_dashboard()
 
         self._running = True
         logger.info("All subsystems initialised. Monitoring started.")
@@ -108,6 +116,12 @@ class RFSpectrumMonitor:
         logger.info("Shutting down RF Spectrum Monitor…")
         self._running = False
 
+        for sweep in self._sweep_managers:
+            try:
+                sweep.stop()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Error stopping sweep manager: %s", exc)
+
         for scanner in self._scanners:
             try:
                 scanner.stop_continuous_scan()
@@ -120,6 +134,12 @@ class RFSpectrumMonitor:
 
         if self._geo_tagger:
             self._geo_tagger.stop()
+
+        if self._dashboard:
+            self._dashboard.stop()
+
+        if self._storage:
+            self._storage.close()
 
         logger.info("RF Spectrum Monitor stopped.")
 
@@ -193,11 +213,68 @@ class RFSpectrumMonitor:
             )
             self._alert_mgr.register_sink(splunk)
 
+    def _init_storage(self) -> None:
+        storage_cfg = self.config.get("storage", {})
+        if not storage_cfg.get("enabled", False):
+            return
+        try:
+            from .storage.sqlite_store import DetectionStore
+
+            self._storage = DetectionStore(
+                db_path=storage_cfg.get("db_path", "data/rf_monitor.db"),
+                store_snapshots=storage_cfg.get("store_snapshots", False),
+                snapshot_interval_s=storage_cfg.get("snapshot_interval_s", 5.0),
+            )
+            self._storage.open()
+            logger.info("DetectionStore: SQLite persistence enabled at %s", storage_cfg.get("db_path"))
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to initialise storage: %s", exc)
+
+    def _init_ml_classifier(self) -> None:
+        ml_cfg = self.config.get("ml_classifier", {})
+        if not ml_cfg.get("enabled", False):
+            return
+        try:
+            from .analyzer.ml_classifier import MLSignalClassifier
+
+            clf = MLSignalClassifier()
+            model_path = ml_cfg.get("model_path", "data/rf_classifier.joblib")
+            if os.path.exists(model_path):
+                clf.load(model_path)
+            else:
+                clf.train(n_samples_per_class=ml_cfg.get("n_training_samples", 300))
+                clf.save(model_path)
+            self._ml_classifier = clf
+            logger.info("MLSignalClassifier: ML classifier ready.")
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to initialise ML classifier: %s", exc)
+
+    def _init_dashboard(self) -> None:
+        dash_cfg = self.config.get("dashboard", {})
+        if not dash_cfg.get("enabled", False):
+            return
+        try:
+            from .dashboard.app import DashboardServer
+
+            self._dashboard = DashboardServer(
+                monitor=self,
+                host=dash_cfg.get("host", "0.0.0.0"),
+                port=dash_cfg.get("port", 8080),
+                max_waterfall_rows=dash_cfg.get("max_waterfall_rows", 100),
+                detection_history_limit=dash_cfg.get("detection_history_limit", 500),
+            )
+            self._dashboard.start()
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to start dashboard: %s", exc)
+
     def _init_scanners(self) -> None:
         scanner_cfgs = self.config.get("scanners", [])
         if not scanner_cfgs:
             # Default: single simulated RTL-SDR
             scanner_cfgs = [{"type": "rtlsdr", "unit_id": "rtlsdr-0"}]
+
+        sweep_cfg = self.config.get("sweep", {})
+        sweep_enabled = sweep_cfg.get("enabled", False)
 
         for cfg in scanner_cfgs:
             scanner_type = cfg.get("type", "rtlsdr").lower()
@@ -224,10 +301,18 @@ class RFSpectrumMonitor:
                 )
 
             scanner.open()
-            scanner.start_continuous_scan(
-                callback=self._on_scan_result,
-                interval_s=cfg.get("scan_interval_s", 0.1),
-            )
+
+            if sweep_enabled and sweep_cfg.get("bands"):
+                sweep_mgr = SweepManager.from_config(scanner, sweep_cfg)
+                sweep_mgr.start(callback=self._on_scan_result)
+                self._sweep_managers.append(sweep_mgr)
+                logger.info("SweepManager started for scanner: %r", scanner)
+            else:
+                scanner.start_continuous_scan(
+                    callback=self._on_scan_result,
+                    interval_s=cfg.get("scan_interval_s", 0.1),
+                )
+
             self._scanners.append(scanner)
             logger.info("Scanner started: %r", scanner)
 
@@ -257,6 +342,18 @@ class RFSpectrumMonitor:
         # Analyse
         processed = self._analyzer.process(result)
 
+        # Persist snapshot (if storage + snapshots enabled)
+        if self._storage:
+            try:
+                self._storage.save_snapshot(
+                    unit_id=result.unit_id,
+                    center_freq_hz=result.center_freq_hz,
+                    power_db=processed.power_db,
+                    timestamp=result.timestamp,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Storage snapshot error: %s", exc)
+
         # Feed waterfall
         if self._waterfall:
             self._waterfall.add_row(processed.power_db)
@@ -264,6 +361,14 @@ class RFSpectrumMonitor:
         # Detect threats
         detections = self._detector.process(processed)
         for detection in detections:
+            # Override classification with ML model if available
+            if self._ml_classifier:
+                detection.signal_class = self._ml_classifier.classify(
+                    detection.center_freq_hz,
+                    detection.bandwidth_hz,
+                    detection.peak_power_db,
+                )
+
             logger.warning(
                 "THREAT DETECTED: %s | %.3f MHz | %.1f dBm | %s | persisted %.0fs",
                 detection.unit_id,
@@ -272,7 +377,24 @@ class RFSpectrumMonitor:
                 detection.signal_class,
                 detection.persistence_s,
             )
-            self._alert_mgr.alert_from_detection(detection)
+
+            event = self._alert_mgr.alert_from_detection(detection)
+
+            # Persist detection
+            if self._storage:
+                try:
+                    self._storage.save_detection(detection, severity=event.severity.value)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("Storage detection error: %s", exc)
+
+            # Feed dashboard history
+            if self._dashboard:
+                try:
+                    det_dict = detection.to_dict()
+                    det_dict["severity"] = event.severity.value
+                    self._dashboard.record_detection(det_dict)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("Dashboard record error: %s", exc)
 
     def _on_mesh_detection(self, unit_id: str, data: dict) -> None:
         """Callback for detections reported by remote mesh nodes."""

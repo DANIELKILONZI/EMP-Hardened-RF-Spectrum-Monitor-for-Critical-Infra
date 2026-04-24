@@ -20,8 +20,15 @@ pyserial>=3.5          # For direct serial NMEA GPS receivers
 # Visualisation (optional – enables PNG waterfall export)
 matplotlib>=3.7.0
 
-# Web dashboard (optional)
-# flask>=3.0.0           # Uncomment to enable the HTTP dashboard
+# Web dashboard
+flask>=3.0.0
+
+# Signal geo-location triangulation (optional – improves position accuracy)
+# scipy>=1.11.0          # Uncomment for least-squares triangulation
+
+# ML signal classifier (optional)
+# scikit-learn>=1.5.0    # Uncomment to enable ML-based classification
+# joblib>=1.3.0          # Uncomment for model persistence (save/load)
 
 # Development / testing
 pytest>=7.4.0

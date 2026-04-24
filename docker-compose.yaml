@@ -1,0 +1,88 @@
+# ============================================================
+# EMP-Hardened RF Spectrum Monitor – Docker Compose Stack
+# ============================================================
+# Services:
+#   rf-monitor   – The main monitoring process (Flask dashboard on :8080)
+#   grafana      – Grafana dashboard connected to SQLite via the JSON API
+#   splunk-hec   – Optional Splunk Universal Forwarder / HEC receiver
+#
+# Start the full stack:
+#   docker compose up -d
+#
+# Start monitor only (no Grafana/Splunk):
+#   docker compose up -d rf-monitor
+# ============================================================
+
+version: "3.9"
+
+services:
+  # ------------------------------------------------------------------
+  # Main RF Spectrum Monitor
+  # ------------------------------------------------------------------
+  rf-monitor:
+    build:
+      context: .
+      target: runtime
+    image: emp-rf-monitor:latest
+    container_name: rf-monitor
+    restart: unless-stopped
+    ports:
+      - "8080:8080"       # Web dashboard
+    volumes:
+      - ./config:/app/config:ro          # Mount config as read-only
+      - rf_output:/app/output            # Waterfall PNGs, GeoJSON exports
+      - rf_db:/app/data                  # SQLite persistence
+    environment:
+      - RF_LOG_LEVEL=INFO
+      - RF_SPLUNK_TOKEN=${RF_SPLUNK_TOKEN:-}
+    command: ["--config", "config/default.yaml"]
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/status')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ------------------------------------------------------------------
+  # Grafana (visualise SQLite data via JSON data source plugin)
+  # ------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: rf-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-rfmonitor}
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+    depends_on:
+      rf-monitor:
+        condition: service_healthy
+
+  # ------------------------------------------------------------------
+  # Optional: Splunk Universal Forwarder / HEC receiver
+  # Uncomment to enable Splunk SIEM integration.
+  # ------------------------------------------------------------------
+  # splunk:
+  #   image: splunk/splunk:9.2.1
+  #   container_name: rf-splunk
+  #   restart: unless-stopped
+  #   ports:
+  #     - "8088:8088"    # HEC port
+  #     - "8000:8000"    # Splunk Web
+  #   environment:
+  #     - SPLUNK_START_ARGS=--accept-license
+  #     - SPLUNK_PASSWORD=${SPLUNK_ADMIN_PASSWORD:-rfmonitor123!}
+  #   volumes:
+  #     - splunk_data:/opt/splunk/var
+
+volumes:
+  rf_output:
+  rf_db:
+  grafana_data:
