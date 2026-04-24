@@ -193,28 +193,30 @@ class DashboardServer:
             nodes = [n.to_dict() for n in mon._mesh.get_nodes()]
             return jsonify({"nodes": nodes, "enabled": True, "online_count": mon._mesh.online_count()})
 
+        # Allowlist of config filenames that may be hot-reloaded.
+        _ALLOWED_CONFIG_FILES = frozenset(
+            {"default.yaml", "default.yml", "production.yaml", "production.yml",
+             "development.yaml", "development.yml", "field_unit.yaml", "field_unit.yml"}
+        )
+
         @app.route("/api/config/reload", methods=["POST"])
         def api_config_reload() -> Any:
             mon = server.monitor
-            # The config directory is fixed server-side.
             config_dir = os.path.realpath(
                 os.path.join(os.path.dirname(__file__), "..", "..", "config")
             )
-            # Accept an optional filename (not a path) from the caller.
-            # We combine it with the fixed directory ourselves so that no
-            # user-controlled path component can escape the config root.
-            filename = None
+            # Accept an optional config name chosen from the allowlist.
+            # The config_filename value is validated against a fixed set of
+            # permitted names so no user-controlled path component reaches open().
+            config_filename = "default.yaml"
             if request.is_json and request.json:
-                raw = request.json.get("config_filename")
-                if raw is not None:
-                    # Strip any directory separators – only bare filename allowed.
-                    bare = os.path.basename(str(raw))
-                    if bare and bare == raw and not raw.startswith("."):
-                        filename = bare
-            if filename is None:
-                filename = "default.yaml"
+                requested = request.json.get("config_filename", "default.yaml")
+                if isinstance(requested, str) and requested in _ALLOWED_CONFIG_FILES:
+                    config_filename = requested
 
-            config_path = os.path.join(config_dir, filename)
+            # config_dir is fixed; config_filename is validated against an
+            # allowlist – the resulting path cannot be attacker-controlled.
+            config_path = os.path.join(config_dir, config_filename)
 
             try:
                 import yaml  # type: ignore
@@ -223,13 +225,12 @@ class DashboardServer:
                     new_config = yaml.safe_load(fh)
                 mon.config = new_config
                 logger.info("Config reloaded from %s", config_path)
-                return jsonify({"status": "ok", "config_filename": filename})
+                return jsonify({"status": "ok", "config_filename": config_filename})
             except FileNotFoundError:
                 logger.error("Config reload failed – file not found: %s", config_path)
                 return jsonify({"status": "error", "message": "Config file not found."}), 404
             except Exception as exc:  # noqa: BLE001
                 logger.error("Config reload failed: %s", exc)
-                # Do not expose internal exception details to the caller.
                 return jsonify({"status": "error", "message": "Failed to reload configuration."}), 500
 
         return app

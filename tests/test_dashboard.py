@@ -125,12 +125,12 @@ class TestDashboardServer:
     def test_config_reload_endpoint(self, tmp_path):
         import yaml
 
-        # Write a valid config into the real config directory
+        # Write a valid config into the real config directory under an allowlisted name
         config_dir = os.path.realpath(
             os.path.join(os.path.dirname(__file__), "..", "config")
         )
         os.makedirs(config_dir, exist_ok=True)
-        filename = "test_reload.yaml"
+        filename = "development.yaml"  # in allowlist
         cfg_file = os.path.join(config_dir, filename)
         try:
             with open(cfg_file, "w") as fh:
@@ -152,23 +152,28 @@ class TestDashboardServer:
     def test_config_reload_bad_path(self):
         app = self.server._build_app()
         with app.test_client() as client:
-            # A non-existent filename returns 404
+            # An unknown filename falls through to default; if default.yaml exists it returns 200
+            # If it doesn't, returns 404. Either way no arbitrary path is opened.
             resp = client.post(
                 "/api/config/reload",
                 json={"config_filename": "nonexistent_file_xyz.yaml"},
                 content_type="application/json",
             )
-            assert resp.status_code == 404
+            # Non-allowlisted filename → falls back to default.yaml → 200 or 404
+            assert resp.status_code in (200, 404)
 
     def test_config_reload_path_traversal_rejected(self):
         app = self.server._build_app()
         with app.test_client() as client:
-            # Path components must be stripped; any path separator → fallback to default
+            # Path traversal attempt not in allowlist → falls back to default.yaml
             resp = client.post(
                 "/api/config/reload",
                 json={"config_filename": "../etc/passwd"},
                 content_type="application/json",
             )
-            # Should either be rejected (404 for default.yaml) or reject traversal
-            # Either way must not open an arbitrary path
-            assert resp.status_code in (200, 404, 400)
+            data = resp.get_json()
+            # Falls back to default.yaml; response must NOT load /etc/passwd
+            assert resp.status_code in (200, 404)
+            # Confirm the reported filename is default.yaml (the fallback)
+            if resp.status_code == 200:
+                assert data.get("config_filename") == "default.yaml"
