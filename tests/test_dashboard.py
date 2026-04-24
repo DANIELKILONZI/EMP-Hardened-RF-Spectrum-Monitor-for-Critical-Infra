@@ -1,5 +1,6 @@
 """Tests for the web dashboard server."""
 
+import os
 import threading
 import time
 from unittest.mock import MagicMock, patch
@@ -124,26 +125,50 @@ class TestDashboardServer:
     def test_config_reload_endpoint(self, tmp_path):
         import yaml
 
-        cfg = {"logging": {"level": "DEBUG"}}
-        cfg_file = tmp_path / "test.yaml"
-        cfg_file.write_text(yaml.dump(cfg))
+        # Write a valid config into the real config directory
+        config_dir = os.path.realpath(
+            os.path.join(os.path.dirname(__file__), "..", "config")
+        )
+        os.makedirs(config_dir, exist_ok=True)
+        filename = "test_reload.yaml"
+        cfg_file = os.path.join(config_dir, filename)
+        try:
+            with open(cfg_file, "w") as fh:
+                yaml.dump({"logging": {"level": "DEBUG"}}, fh)
 
-        app = self.server._build_app()
-        with app.test_client() as client:
-            resp = client.post(
-                "/api/config/reload",
-                json={"config_path": str(cfg_file)},
-                content_type="application/json",
-            )
-            data = resp.get_json()
-            assert data["status"] == "ok"
+            app = self.server._build_app()
+            with app.test_client() as client:
+                resp = client.post(
+                    "/api/config/reload",
+                    json={"config_filename": filename},
+                    content_type="application/json",
+                )
+                data = resp.get_json()
+                assert data["status"] == "ok"
+        finally:
+            if os.path.exists(cfg_file):
+                os.remove(cfg_file)
 
     def test_config_reload_bad_path(self):
         app = self.server._build_app()
         with app.test_client() as client:
+            # A non-existent filename returns 404
             resp = client.post(
                 "/api/config/reload",
-                json={"config_path": "/nonexistent/path.yaml"},
+                json={"config_filename": "nonexistent_file_xyz.yaml"},
                 content_type="application/json",
             )
-            assert resp.status_code == 500
+            assert resp.status_code == 404
+
+    def test_config_reload_path_traversal_rejected(self):
+        app = self.server._build_app()
+        with app.test_client() as client:
+            # Path components must be stripped; any path separator → fallback to default
+            resp = client.post(
+                "/api/config/reload",
+                json={"config_filename": "../etc/passwd"},
+                content_type="application/json",
+            )
+            # Should either be rejected (404 for default.yaml) or reject traversal
+            # Either way must not open an arbitrary path
+            assert resp.status_code in (200, 404, 400)

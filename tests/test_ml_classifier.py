@@ -1,5 +1,7 @@
 """Tests for the ML signal classifier."""
 
+import os
+
 import numpy as np
 import pytest
 
@@ -140,6 +142,3 @@ class TestMLSignalClassifierTrained:
         unique_labels = set(y)
         for cls in SIGNAL_CLASSES:
             assert cls in unique_labels
-
-
-import os
