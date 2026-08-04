@@ -1,0 +1,179 @@
+# EMP-Hardened RF Spectrum Monitor – Default Configuration
+# =========================================================
+# Covers 100 MHz – 6 GHz for threat detection in critical infrastructure
+# (power grids, airports, government sites).
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging:
+  level: INFO
+  format: "%(asctime)s %(levelname)-8s %(name)s: %(message)s"
+
+# ---------------------------------------------------------------------------
+# SDR Scanners
+# Configure one entry per physical SDR unit deployed at this site.
+# Supported types: "rtlsdr", "usrp"
+# ---------------------------------------------------------------------------
+scanners:
+  # --- Example RTL-SDR array covering 100 MHz – 2.4 GHz ---
+  - type: rtlsdr
+    unit_id: rtlsdr-0
+    center_freq_hz: 433000000      # 433 MHz ISM – drone telemetry / RC links
+    sample_rate_hz: 2400000        # 2.4 MS/s
+    gain_db: 30.0
+    device_index: 0
+    scan_interval_s: 0.1
+
+  - type: rtlsdr
+    unit_id: rtlsdr-1
+    center_freq_hz: 915000000      # 915 MHz ISM
+    sample_rate_hz: 2400000
+    gain_db: 30.0
+    device_index: 1
+    scan_interval_s: 0.1
+
+  - type: rtlsdr
+    unit_id: rtlsdr-2
+    center_freq_hz: 1575420000     # GPS L1 – monitor for GPS jamming
+    sample_rate_hz: 2400000
+    gain_db: 25.0
+    device_index: 2
+    scan_interval_s: 0.2
+
+  - type: rtlsdr
+    unit_id: rtlsdr-3
+    center_freq_hz: 2450000000     # 2.4 GHz – drone control / Wi-Fi
+    sample_rate_hz: 2400000
+    gain_db: 28.0
+    device_index: 3
+    scan_interval_s: 0.1
+
+  # --- USRP B200 covering 5.8 GHz drone video links ---
+  - type: usrp
+    unit_id: usrp-0
+    center_freq_hz: 5800000000     # 5.8 GHz – FPV drone video
+    sample_rate_hz: 10000000       # 10 MS/s – wideband coverage
+    gain_db: 40.0
+    device_args: ""                # empty = first available USRP
+    scan_interval_s: 0.05
+
+# ---------------------------------------------------------------------------
+# Spectrum Analyzer
+# ---------------------------------------------------------------------------
+analyzer:
+  history_seconds: 120.0            # Keep 2 min of scan history
+  calibration_offset_db: 0.0        # Adjust for cable/LNA losses
+  smoothing_alpha: 0.7              # EMA smoothing (0=none, 1=no history)
+
+# ---------------------------------------------------------------------------
+# Signal Detection Rules
+# Rule: Flag unknown signals > threshold_db persisting > persistence_s
+# (matches problem statement: >-80 dBm for 30 seconds)
+# ---------------------------------------------------------------------------
+detection:
+  threshold_db: -80.0               # dBm – minimum power to track
+  persistence_s: 30.0               # seconds – confirm after this duration
+  bin_merge_hz: 500000              # Hz – merge adjacent bins within 500 kHz
+  max_track_age_s: 60.0             # seconds – expire silent tracks
+
+# ---------------------------------------------------------------------------
+# Alerts
+# ---------------------------------------------------------------------------
+alerts:
+  dedup_window_s: 60.0              # Suppress duplicate alerts for 60 s
+
+  # SNMP v2c traps → NMS / Splunk SNMP input
+  snmp:
+    enabled: true
+    host: "127.0.0.1"               # NMS / Splunk SNMP receiver IP
+    port: 162
+    community: "public"
+
+  # Splunk HTTP Event Collector (HEC)
+  splunk:
+    enabled: false                  # Set to true when Splunk is configured
+    hec_url: "https://splunk.example.com:8088/services/collector/event"
+    token: ""                       # Set via env var RF_SPLUNK_TOKEN in prod
+    index: "rf_spectrum"
+    source: "emp_monitor"
+    sourcetype: "rf:threat"
+
+# ---------------------------------------------------------------------------
+# GPS Geo-Tagging
+# ---------------------------------------------------------------------------
+gps:
+  serial_port: null                 # e.g. "/dev/ttyUSB0" for serial GPS
+  baud_rate: 9600
+  # Static fallback coordinates (used when GPS hardware is absent)
+  static_lat: 38.8977               # 38.8977°N – example: Washington DC
+  static_lon: -77.0365              # 77.0365°W
+  static_alt: 10.0                  # metres above sea level
+
+# ---------------------------------------------------------------------------
+# Mesh Network (50-unit deployment)
+# ---------------------------------------------------------------------------
+mesh:
+  enabled: false                    # Enable on the designated coordinator node
+  host: "0.0.0.0"
+  port: 5555
+  max_units: 50                     # Maximum field units in mesh
+
+# ---------------------------------------------------------------------------
+# Display / Dashboard
+# ---------------------------------------------------------------------------
+display:
+  waterfall: true                   # Render ASCII waterfall in console
+  status_interval_s: 10.0           # Print status summary every 10 s
+  waterfall_output_dir: "output/waterfalls"   # Directory for PNG exports
+
+# ---------------------------------------------------------------------------
+# Web Dashboard
+# ---------------------------------------------------------------------------
+dashboard:
+  enabled: false                    # Set to true to enable the HTTP dashboard
+  host: "0.0.0.0"
+  port: 8080
+  max_waterfall_rows: 100
+  detection_history_limit: 500
+
+# ---------------------------------------------------------------------------
+# Frequency Sweep / Hop Mode
+# ---------------------------------------------------------------------------
+sweep:
+  enabled: false                    # Set to true to enable frequency hopping
+  loop: true                        # Cycle through bands continuously
+  bands:
+    - center_hz: 433000000
+      dwell_s: 0.5
+      label: "433 MHz ISM"
+    - center_hz: 915000000
+      dwell_s: 0.5
+      label: "915 MHz ISM"
+    - center_hz: 1575420000
+      dwell_s: 0.5
+      label: "GPS L1"
+    - center_hz: 2450000000
+      dwell_s: 1.0
+      label: "2.4 GHz Drone/WiFi"
+    - center_hz: 5800000000
+      dwell_s: 1.0
+      label: "5.8 GHz FPV"
+
+# ---------------------------------------------------------------------------
+# Persistent Storage (SQLite)
+# ---------------------------------------------------------------------------
+storage:
+  enabled: false                    # Set to true to persist detections to SQLite
+  db_path: "data/rf_monitor.db"
+  store_snapshots: false            # Also save spectrum snapshots (disk-intensive)
+  snapshot_interval_s: 5.0
+  purge_older_than_days: 90         # Auto-delete records older than this
+
+# ---------------------------------------------------------------------------
+# ML Signal Classifier
+# ---------------------------------------------------------------------------
+ml_classifier:
+  enabled: false                    # Set to true to use ML classifier
+  model_path: "data/rf_classifier.joblib"  # Pre-trained model (auto-trains if absent)
+  n_training_samples: 300           # Samples per class for initial training

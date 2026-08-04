@@ -1,0 +1,103 @@
+# Detection Rules Configuration
+# ================================
+# Named rules evaluated against each confirmed DetectedSignal.
+# Rules are evaluated in order; the first match wins the classification.
+#
+# Fields:
+#   name        – Human-readable rule name
+#   freq_min_mhz / freq_max_mhz – Frequency band (MHz)
+#   bw_min_khz / bw_max_khz     – Signal bandwidth (kHz, optional)
+#   power_min_dbm               – Minimum power threshold (dBm)
+#   persistence_s               – Required persistence (seconds)
+#   classification              – Label assigned to the detection
+#   severity                    – critical | warning | info
+#   description                 – Human-readable threat description
+
+rules:
+
+  # ---- GPS Jamming (L1: 1575.42 MHz) ------------------------------------
+  - name: gps_l1_jammer
+    freq_min_mhz: 1560.0
+    freq_max_mhz: 1590.0
+    power_min_dbm: -75.0
+    persistence_s: 5.0             # GPS jammers act fast – short persistence
+    classification: gps_jammer
+    severity: critical
+    description: >
+      Potential GPS L1 jammer detected. Immediate action required –
+      navigation systems may be compromised.
+
+  # ---- GPS L2 Jamming (1227.6 MHz) --------------------------------------
+  - name: gps_l2_jammer
+    freq_min_mhz: 1215.0
+    freq_max_mhz: 1240.0
+    power_min_dbm: -75.0
+    persistence_s: 5.0
+    classification: gps_jammer_l2
+    severity: critical
+    description: GPS L2 jammer detected.
+
+  # ---- Drone Control 2.4 GHz --------------------------------------------
+  - name: drone_control_24ghz
+    freq_min_mhz: 2400.0
+    freq_max_mhz: 2485.0
+    bw_max_khz: 20000              # Narrow control links
+    power_min_dbm: -80.0
+    persistence_s: 30.0
+    classification: drone_control_2.4GHz
+    severity: warning
+    description: Suspected unauthorised drone control link at 2.4 GHz.
+
+  # ---- Drone FPV Video 5.8 GHz ------------------------------------------
+  - name: drone_fpv_58ghz
+    freq_min_mhz: 5725.0
+    freq_max_mhz: 5875.0
+    power_min_dbm: -80.0
+    persistence_s: 30.0
+    classification: drone_fpv_5.8GHz
+    severity: warning
+    description: Suspected drone FPV video link at 5.8 GHz.
+
+  # ---- Cellular Jammer (700–960 MHz) ------------------------------------
+  - name: cellular_jammer
+    freq_min_mhz: 700.0
+    freq_max_mhz: 960.0
+    bw_min_khz: 5000               # Broad-band sweep signature
+    power_min_dbm: -80.0
+    persistence_s: 10.0
+    classification: cellular_jammer
+    severity: critical
+    description: >
+      Broadband cellular jammer in 700–960 MHz band. COMMS disruption risk.
+
+  # ---- VHF Air Traffic Control (118–137 MHz) ----------------------------
+  - name: vhf_atc_interference
+    freq_min_mhz: 118.0
+    freq_max_mhz: 137.0
+    power_min_dbm: -80.0
+    persistence_s: 30.0
+    classification: vhf_atc_interference
+    severity: critical
+    description: Unexpected signal in VHF air traffic control band.
+
+  # ---- ISM 433 MHz Rogue Signal -----------------------------------------
+  - name: ism_433_rogue
+    freq_min_mhz: 430.0
+    freq_max_mhz: 440.0
+    power_min_dbm: -80.0
+    persistence_s: 30.0
+    classification: ism_433_rogue
+    severity: info
+    description: Persistent rogue signal in 433 MHz ISM band.
+
+  # ---- Generic Unknown Signal (catch-all) --------------------------------
+  - name: unknown_signal
+    freq_min_mhz: 100.0
+    freq_max_mhz: 6000.0
+    power_min_dbm: -80.0
+    persistence_s: 30.0
+    classification: unknown
+    severity: warning
+    description: >
+      Unknown signal above detection threshold persisting for 30 seconds.
+      Manual investigation required.

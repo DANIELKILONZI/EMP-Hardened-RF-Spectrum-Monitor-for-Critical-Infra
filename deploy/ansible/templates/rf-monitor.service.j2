@@ -1,0 +1,26 @@
+# rf-monitor.service.j2 – Systemd service unit template for Ansible
+[Unit]
+Description=EMP-Hardened RF Spectrum Monitor
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User={{ service_user }}
+Group={{ service_user }}
+WorkingDirectory={{ install_dir }}
+ExecStart={{ venv_dir }}/bin/python -m src.monitor --config {{ config_dir }}/default.yaml
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:{{ log_dir }}/rf-monitor.log
+StandardError=append:{{ log_dir }}/rf-monitor-error.log
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths={{ data_dir }} {{ log_dir }}
+
+[Install]
+WantedBy=multi-user.target
